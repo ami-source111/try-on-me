@@ -4,11 +4,72 @@
 
 Сервис виртуальной примерки одежды. MVP для питча ритейлерам.
 
-Пользователь устанавливает Chrome-расширение, заходит на любой сайт одежды — рядом с крупными картинками появляется кнопка «Try on me 👗». После нажатия генерируется 3-секундное видео: пользователь в этой одежде медленно поворачивается на белом фоне.
+Пользователь устанавливает Chrome-расширение, заходит на сайт магазина — рядом с крупными картинками одежды (≥300×300px) появляется кнопка «Try on me». После нажатия AI генерирует короткое видео: пользователь в этой одежде.
 
-## Цель MVP
+**Цель MVP** — показать работающий прототип ритейлерам. Ритейлер ставит расширение, заходит на свой сайт — видит продукт в действии.
 
-Показать работающий прототип ритейлерам. Ритейлер ставит расширение, заходит на свой сайт и видит продукт в действии прямо на своих карточках товаров. Без изменений на стороне сайта.
+---
+
+## Текущий статус (май 2026)
+
+| Этап | Содержание | Статус |
+|---|---|---|
+| 1 | Backend: FastAPI + PostgreSQL + Docker | ✅ Готово, задеплоено |
+| 2 | Сессии без авторизации (cookie/UUID) | ✅ Готово |
+| 3 | AI-пайплайн: cat-vton + LTX Video | ✅ Работает end-to-end |
+| 4 | Chrome-расширение | ⏳ Следующий этап |
+| 5 | Интеграция и тесты | ⏳ |
+| 6 | Подготовка демо | ⏳ |
+
+**Пайплайн проверен** — статус `done`, видео генерируется (~3 мин). Тест 16.05.2026.
+
+---
+
+## Сервер (Hetzner)
+
+- **IP**: 116.203.138.149
+- **Домен**: amirov.mooo.com (A-запись настроена, HTTPS не настроен)
+- **OS**: Ubuntu 22
+- **Проект**: `/opt/try-on-me-new/`
+- **Nginx**: системный (не Docker), конфиг: `/etc/nginx/sites-available/tryon`
+- **Media volume**: `/var/lib/docker/volumes/try-on-me-new_media_data/_data/`
+- **Docker**: `docker compose` из `/opt/try-on-me-new/`
+
+### Ключевые команды на сервере
+
+```bash
+cd /opt/try-on-me-new
+docker compose ps                        # статус контейнеров
+docker compose logs app --tail=30        # логи приложения
+docker compose up -d --build             # пересборка и запуск
+docker compose exec app python -c "..."  # выполнить Python в контейнере
+
+# Проверить API
+curl http://116.203.138.149/health
+
+# Тест полного пайплайна
+SESSION=$(curl -s -X POST http://116.203.138.149/sessions/photo \
+  -F "file=@/usr/share/pixmaps/debian-logo.png" | python3 -c "import sys,json; print(json.load(sys.stdin)['session_id'])")
+JOB=$(curl -s -X POST http://116.203.138.149/tryon \
+  -H "Content-Type: application/json" \
+  -d "{\"session_id\": \"$SESSION\", \"clothing_image_url\": \"http://116.203.138.149/media/test-shirt.jpg\"}" \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['job_id'])")
+watch -n 20 "curl -s http://116.203.138.149/tryon/$JOB | python3 -m json.tool"
+```
+
+### Конфигурация сервера
+
+```bash
+# /etc/nginx/sites-available/tryon — ключевое:
+# proxy_pass http://127.0.0.1:8765;
+# alias /var/lib/docker/volumes/try-on-me-new_media_data/_data/;
+
+# После изменений nginx:
+nginx -t && systemctl reload nginx
+
+# Docker daemon DNS (нужен для внешних запросов из контейнера):
+# /etc/docker/daemon.json → {"dns": ["8.8.8.8", "1.1.1.1"]}
+```
 
 ---
 
@@ -16,87 +77,43 @@
 
 ```
 Chrome Extension  →  Backend API (FastAPI)  →  fal.ai (AI)
-      ↕                      ↕
- Пользователь          Telegram Bot + R2
+                            ↕
+                    PostgreSQL + /app/media
 ```
 
 ### Компоненты
 
-| Компонент | Технология | Назначение |
-|---|---|---|
-| Chrome Extension | MV3, Vanilla JS | Инжекция кнопки, показ видео в попапе |
-| Backend API | Python 3.12 + FastAPI | Оркестрация, БД, запуск AI |
-| Telegram Bot | python-telegram-bot v20 | Авторизация, фото пользователя, доставка видео |
-| AI | fal.ai SDK | Виртуальная примерка + генерация видео |
-| База данных | PostgreSQL + SQLAlchemy async | Пользователи, задачи |
-| Хранилище | Cloudflare R2 | Фото пользователей, готовые видео |
-| Хостинг | Railway | Backend + PostgreSQL |
+| Компонент | Технология |
+|---|---|
+| Backend API | Python 3.12 + FastAPI |
+| База данных | PostgreSQL 16 (Docker) |
+| Хранилище медиа | Локальный диск `/app/media` → nginx |
+| AI | fal.ai: cat-vton + ltx-video |
+| Хостинг | Hetzner VPS + Docker Compose |
+| Nginx | Системный (не в Docker) |
 
 ---
 
-## AI-пайплайн (fal.ai)
+## AI-пайплайн
 
-**Модели (дешёвые, для MVP):**
+### Модели
 
-| Шаг | Модель | Цена | Назначение |
+| Шаг | Модель | Цена | Параметры |
 |---|---|---|---|
-| 1 — Try-on | `fal-ai/cat-vton` | ~$0.02–0.03 | Статичное фото пользователя в одежде |
-| 2 — Видео | `fal-ai/wan/v2.1/1.3b/image-to-video` | ~$0.03–0.05 | 3-секундное видео с поворотом |
+| 1 — Try-on | `fal-ai/cat-vton` | ~$0.03 | `human_image_url`, `garment_image_url`, `cloth_type: "upper"` |
+| 2 — Видео | `fal-ai/ltx-video` | $0.02 | `image_url`, `prompt` |
 
 **Промпт для видео:**
 ```
-A person wearing the outfit, slowly rotating 360 degrees on a white cyclorama background, studio lighting, smooth motion, 3 seconds
+A person wearing the outfit, slowly rotating 360 degrees on a white
+cyclorama studio background, smooth motion, professional studio lighting
 ```
 
-**Итого за одну примерку: ~$0.05–0.08**
+**Важно:** одежду скачиваем сами (контейнер), загружаем в fal.ai storage — fal.ai не всегда может достучаться до внешних CDN.
 
-При необходимости (для финального демо) заменить на платные модели:
-- `fashn/tryon` вместо cat-vton
-- `fal-ai/kling-video/v1.6/standard/image-to-video` вместо wan
+### Статусы job
 
----
-
-## Ключевые решения
-
-### Chrome Extension
-- Manifest V3
-- Кнопка инжектируется рядом с `<img>` с `naturalWidth ≥ 300` и `naturalHeight ≥ 300`
-- MutationObserver — работает с SPA и динамическим контентом
-- Попап показывает 4 состояния: не авторизован / ожидание / загрузка / видео готово
-- Polling бэкенда каждые 5 секунд через background service worker
-
-### Авторизация
-- Только через Telegram-бот — никаких отдельных логинов
-- Пользователь пишет `/start` → загружает фото → бот генерирует auth_token (UUID, живёт 1 час)
-- Расширение открывает deep link → бэкенд отдаёт `user_id` → расширение сохраняет в `chrome.storage`
-- Фото загружается один раз, обновляется командой `/photo`
-
-### Доставка результата
-- **Одновременно**: видео показывается в попапе расширения И приходит в Telegram-бот
-- Polling: расширение опрашивает `GET /tryon/{job_id}` каждые 5 сек
-
-### Валидация фото
-- **Не делаем в MVP** — пропускаем любое присланное фото
-
-### История примерок
-- Сохраняются в БД (таблица `tryon_jobs`), видео хранится в R2
-- В MVP нет UI для истории — просто хранится
-
----
-
-## User Flow
-
-### Онбординг (первый раз)
-1. Установить расширение Chrome
-2. В попапе — нажать «Войти через Telegram»
-3. В боте: `/start` → прислать фото в полный рост
-4. В боте: нажать «Подключить к расширению» → расширение авторизовано
-
-### Примерка
-1. Зайти на сайт магазина одежды
-2. Кнопка «Try on me 👗» появляется рядом с крупными картинками
-3. Нажать кнопку → в попапе спиннер «~60 сек»
-4. Видео приходит в Telegram + показывается в попапе
+`pending` → `processing_tryon` → `processing_video` → `done` / `failed`
 
 ---
 
@@ -104,97 +121,138 @@ A person wearing the outfit, slowly rotating 360 degrees on a white cyclorama ba
 
 | Метод | Путь | Описание |
 |---|---|---|
-| GET | `/health` | Healthcheck для Railway |
-| POST | `/webhook/telegram` | Webhook от Telegram |
-| GET | `/auth/connect?token=XXX` | Расширение обменивает токен на user_id |
-| POST | `/tryon` | Запустить примерку `{user_id, clothing_image_url}` |
-| GET | `/tryon/{job_id}` | Статус и результат задачи |
+| GET | `/health` | Healthcheck |
+| POST | `/sessions/photo` | Загрузить фото, получить session_id |
+| GET | `/sessions/me?session_id=UUID` | Проверить сессию |
+| POST | `/tryon` | `{session_id, clothing_image_url}` → `{job_id}` |
+| GET | `/tryon/{job_id}` | Статус и video_url |
+
+**Документация:** http://116.203.138.149/docs
 
 ---
 
 ## Схема БД
 
 ### `users`
-| Поле | Тип |
-|---|---|
-| id | UUID PK |
-| telegram_user_id | BIGINT UNIQUE |
-| telegram_username | VARCHAR(64) |
-| photo_url | TEXT |
-| auth_token | UUID |
-| auth_token_expires_at | TIMESTAMP |
-| created_at / updated_at | TIMESTAMP |
+- `id` (UUID PK) — это и есть session_id
+- `photo_url` (TEXT) — путь к фото в /app/media/photos/
+- `created_at`, `updated_at`
 
 ### `tryon_jobs`
-| Поле | Тип |
-|---|---|
-| id | UUID PK |
-| user_id | UUID FK |
-| clothing_image_url | TEXT |
-| tryon_image_url | TEXT |
-| video_url | TEXT |
-| status | VARCHAR(32): pending / processing_tryon / processing_video / done / failed |
-| error_message | TEXT |
-| created_at / completed_at | TIMESTAMP |
+- `id` (UUID PK)
+- `user_id` (FK → users.id)
+- `clothing_image_url` — исходный URL с сайта магазина
+- `tryon_image_url` — результат шага 1 (URL fal.ai)
+- `video_url` — результат шага 2 (локальный URL /media/videos/...)
+- `status` — pending/processing_tryon/processing_video/done/failed
+- `error_message`
+- `created_at`, `completed_at`
 
 ---
 
-## Переменные среды
+## Переменные среды (backend/.env)
 
 ```env
-DATABASE_URL=postgresql://user:password@host:5432/tryonme
-FAL_KEY=...
-TG_BOT_TOKEN=...
-R2_ACCESS_KEY=...
-R2_SECRET_KEY=...
-R2_BUCKET=try-on-me
-R2_ENDPOINT=https://<account_id>.r2.cloudflarestorage.com
-R2_PUBLIC_URL=https://pub-xxxxx.r2.dev
-BACKEND_URL=https://your-app.railway.app
+DATABASE_URL=postgresql://tryonme:PASS@db:5432/tryonme
+DB_PASSWORD=...                # в корневом .env для docker-compose
+FAL_KEY=...                    # fal.ai API key (формат: uuid:hex)
+MEDIA_PATH=/app/media
+MEDIA_URL=http://116.203.138.149/media
+BACKEND_URL=http://116.203.138.149
 ```
 
 ---
 
-## Скоуп MVP (что делаем)
+## Структура проекта
 
-- [x] Chrome Extension: инжекция кнопки, попап, auth flow
-- [x] Telegram Bot: авторизация, загрузка фото, доставка видео
-- [x] FastAPI Backend: все эндпоинты
-- [x] AI Pipeline: cat-vton → wan/1.3b video
-- [x] R2 хранилище
-- [x] Railway деплой
-
-## За скоупом MVP (не делаем)
-
-- Валидация фото пользователя
-- История примерок с UI
-- Chrome Web Store публикация
-- Биллинг и SaaS
-- Мобильная версия
-- White-label для ритейлеров
+```
+try-on-me/
+├── context.md                  ← этот файл
+├── docker-compose.yml          ← app + db, порт 8765, dns 8.8.8.8
+├── nginx/
+│   └── nginx.conf              ← шаблон (на сервере отдельный файл)
+└── backend/
+    ├── Dockerfile
+    ├── entrypoint.sh           ← alembic upgrade head → uvicorn
+    ├── requirements.txt
+    ├── .env.example
+    ├── alembic/
+    │   └── versions/
+    │       ├── 001_initial.py
+    │       └── 002_simplify_users.py
+    └── app/
+        ├── main.py             ← FastAPI app, CORS
+        ├── config.py           ← pydantic-settings
+        ├── database.py         ← async SQLAlchemy
+        ├── models/
+        │   ├── user.py
+        │   └── tryon_job.py
+        ├── api/
+        │   ├── health.py
+        │   ├── sessions.py     ← POST /sessions/photo, GET /sessions/me
+        │   └── tryon.py        ← POST /tryon, GET /tryon/{id}
+        └── services/
+            ├── storage.py      ← локальный файловый storage
+            └── pipeline.py     ← AI-пайплайн (cat-vton + ltx-video)
+```
 
 ---
 
-## Этапы разработки
+## GitHub
 
-| Этап | Содержание | Дней |
-|---|---|---|
-| 1 | Бэкенд: скелет, БД, деплой, стабы API | 2 |
-| 2 | Telegram-бот: auth, фото, R2 | 2 |
-| 3 | AI-пайплайн: fal.ai интеграция | 2 |
-| 4 | Chrome Extension | 3 |
-| 5 | Сквозная интеграция и тесты | 2 |
-| 6 | Подготовка демо | 1 |
+- **Репо**: https://github.com/ami-source111/try-on-me
+- **Структура**: файлы в корне (не вложенные)
+- **Git root на сервере**: `/opt/try-on-me-new/`
 
-**Итого: ~12 рабочих дней**
+### Деплой на сервер
+
+```bash
+cd /opt/try-on-me-new
+git pull
+docker compose up -d --build
+```
 
 ---
 
-## Полезные ссылки
+## Известные особенности и решения
 
-- fal.ai cat-vton: https://fal.ai/models/fal-ai/cat-vton
-- fal.ai wan video: https://fal.ai/models/fal-ai/wan/v2.1/1.3b/image-to-video
-- fal.ai Python SDK: https://github.com/fal-ai/fal/tree/main/projects/fal-client
-- python-telegram-bot: https://docs.python-telegram-bot.org/
-- Railway: https://railway.app
-- Cloudflare R2: https://developers.cloudflare.com/r2/
+| Проблема | Решение |
+|---|---|
+| Docker не резолвит внешние домены | `/etc/docker/daemon.json` → dns 8.8.8.8; docker compose dns: [8.8.8.8, 1.1.1.1] |
+| Nginx не читает media volume | `chmod o+x` по всей цепочке до `_data/` |
+| Port 8000 зависает после краша | `fuser -k 8000/tcp` или смена порта (сейчас 8765) |
+| git root был в home dir | Пересоздали .git в try-on-me/, force push |
+| Два FAL_KEY в .env | Дублирующая строка с кириллицей — удалить |
+| Alembic блокирует async event loop | Вынесли в `entrypoint.sh` ДО uvicorn |
+
+---
+
+## Следующий этап: Chrome Extension
+
+### Что нужно реализовать
+
+**Файлы:**
+- `manifest.json` (MV3)
+- `content.js` — инжекция кнопки на img ≥ 300×300
+- `popup.html` / `popup.js` — 4 состояния
+- `background.js` — polling каждые 5 сек
+
+**Состояния попапа:**
+1. Не авторизован → кнопка «Загрузить фото»
+2. Загрузка фото → spinner
+3. Примерка в процессе → spinner + "~60 сек"
+4. Готово → видеоплеер
+
+**Auth flow:**
+- Пользователь загружает фото через попап (`POST /sessions/photo`)
+- Получает `session_id`, сохраняет в `chrome.storage.local`
+- При нажатии «Try on me» → `POST /tryon` с session_id
+
+**API base URL:** `http://116.203.138.149` (до настройки HTTPS/домена)
+
+### Ключевые моменты
+
+- `MutationObserver` для SPA-сайтов
+- Кнопка инжектируется как оверлей поверх `<img>`
+- Polling через `background.js` → `chrome.runtime.sendMessage` → обновление попапа
+- CORS в FastAPI уже настроен (`allow_origins=["*"]`)
