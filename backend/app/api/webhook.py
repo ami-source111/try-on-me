@@ -1,1 +1,1 @@
-# Telegram webhook removed — using cookie-based sessions instead.
+# Reserved for future Telegram webhook (optional feature).

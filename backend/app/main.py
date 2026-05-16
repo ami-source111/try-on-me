@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import auth, health, sessions, tryon
+from app.api import health, sessions, tryon
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -35,4 +35,3 @@ app.add_middleware(
 app.include_router(health.router)
 app.include_router(sessions.router)
 app.include_router(tryon.router)
-app.include_router(auth.router)

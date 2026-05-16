@@ -1,8 +1,8 @@
 """
 AI-пайплайн: виртуальная примерка + генерация видео через fal.ai
 
-Шаг 1: fal-ai/cat-vton      — фото пользователя в одежде (~20–30 сек)
-Шаг 2: fal-ai/wan/v2.1/1.3b/image-to-video — 5-секундное видео (~30–60 сек)
+Шаг 1: fal-ai/cat-vton       — фото пользователя в одежде (~30–60 сек)
+Шаг 2: fal-ai/ltx-video      — короткое видео (~60–90 сек, $0.02)
 
 Запускается в фоне (FastAPI BackgroundTasks) после создания TryonJob.
 """
@@ -14,21 +14,21 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import fal_client
-import httpx
 
 from app.config import settings
 from app.database import AsyncSessionLocal
 from app.models.tryon_job import JobStatus, TryonJob
 from app.models.user import User
-from app.services.storage import upload_video, download_url
+from app.services.storage import download_url, upload_video
 
 logger = logging.getLogger(__name__)
 
 VIDEO_PROMPT = (
     "A person wearing the outfit, slowly rotating 360 degrees on a white "
-    "cyclorama studio background, smooth motion, professional studio lighting, "
-    "clean background, fashion photography style"
+    "cyclorama studio background, smooth motion, professional studio lighting"
 )
+
+os.environ.setdefault("FAL_KEY", settings.fal_key)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -52,7 +52,7 @@ async def _set_status(job_id: str, status: str, **fields):
 
 
 async def _upload_bytes_to_fal(data: bytes, suffix: str = ".jpg") -> str:
-    """Загрузить байты во временный файл и отправить в fal.ai storage."""
+    """Загрузить байты в fal.ai storage и вернуть URL."""
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as f:
         f.write(data)
         tmp = f.name
@@ -63,20 +63,15 @@ async def _upload_bytes_to_fal(data: bytes, suffix: str = ".jpg") -> str:
         os.unlink(tmp)
 
 
-
 def _local_photo_bytes(photo_url: str) -> bytes:
-    """
-    Прочитать фото пользователя с диска.
-    photo_url вида http://host/media/photos/xxx.jpg → media_path/photos/xxx.jpg
-    """
-    # Берём относительный путь после /media/
+    """Прочитать фото пользователя с диска по его публичному URL."""
     if "/media/" in photo_url:
         rel = photo_url.split("/media/", 1)[1]
     else:
         rel = Path(photo_url).name
     full_path = Path(settings.media_path) / rel
     if not full_path.exists():
-        raise FileNotFoundError(f"User photo not found on disk: {full_path}")
+        raise FileNotFoundError(f"User photo not found: {full_path}")
     return full_path.read_bytes()
 
 
@@ -84,12 +79,11 @@ def _local_photo_bytes(photo_url: str) -> bytes:
 
 async def run_pipeline(job_id: str):
     """
-    Запустить полный пайплайн для job_id.
+    Полный AI-пайплайн для job_id.
     Вызывается из BackgroundTasks после создания TryonJob.
     """
     logger.info(f"[{job_id}] Pipeline started")
 
-    # Загрузить данные из БД
     from sqlalchemy import select
     async with AsyncSessionLocal() as db:
         job_result = await db.execute(
@@ -112,56 +106,55 @@ async def run_pipeline(job_id: str):
         photo_url = user.photo_url
 
     try:
+        import asyncio
+
         # ── Шаг 1: виртуальная примерка (cat-vton) ───────────────────────────
         await _set_status(job_id, JobStatus.PROCESSING_TRYON)
-        logger.info(f"[{job_id}] Step 1: uploading user photo to fal.ai")
+        logger.info(f"[{job_id}] Uploading images to fal.ai")
 
-        # Загружаем только фото пользователя — одежду fal.ai скачивает сам по URL
         photo_bytes = _local_photo_bytes(photo_url)
-        person_fal_url = await _upload_bytes_to_fal(photo_bytes, ".jpg")
+        clothing_bytes = await download_url(clothing_url, timeout=30.0)
 
-        logger.info(f"[{job_id}] Step 1: running cat-vton (garment_url={clothing_url})")
+        person_fal_url, garment_fal_url = await asyncio.gather(
+            _upload_bytes_to_fal(photo_bytes, ".jpg"),
+            _upload_bytes_to_fal(clothing_bytes, ".jpg"),
+        )
+
+        logger.info(f"[{job_id}] Running cat-vton")
         tryon_result = await fal_client.run_async(
             "fal-ai/cat-vton",
             arguments={
                 "human_image_url": person_fal_url,
-                "garment_image_url": clothing_url,   # fal.ai скачивает сам
-                "cloth_type": "upper_body",
+                "garment_image_url": garment_fal_url,
+                "cloth_type": "upper",
             },
         )
         tryon_image_url = tryon_result["image"]["url"]
-        logger.info(f"[{job_id}] Try-on image ready: {tryon_image_url}")
+        logger.info(f"[{job_id}] Try-on done: {tryon_image_url}")
 
-        # ── Шаг 2: генерация видео (wan 1.3b) ────────────────────────────────
+        # ── Шаг 2: генерация видео (LTX Video, $0.02) ────────────────────────
         await _set_status(
             job_id, JobStatus.PROCESSING_VIDEO, tryon_image_url=tryon_image_url
         )
-        logger.info(f"[{job_id}] Step 2: running wan video")
+        logger.info(f"[{job_id}] Running LTX video")
 
         video_result = await fal_client.run_async(
-            "fal-ai/wan/v2.1/1.3b/image-to-video",
+            "fal-ai/ltx-video",
             arguments={
                 "image_url": tryon_image_url,
                 "prompt": VIDEO_PROMPT,
-                "num_frames": 49,           # ~5 сек при 10 fps (минимум модели)
-                "frames_per_second": 10,
-                "resolution": "480p",       # дешевле чем 720p
-                "num_inference_steps": 30,
             },
         )
         video_fal_url = video_result["video"]["url"]
-        logger.info(f"[{job_id}] Video ready: {video_fal_url}")
+        logger.info(f"[{job_id}] Video done: {video_fal_url}")
 
         # ── Сохранить видео локально ──────────────────────────────────────────
         video_bytes = await download_url(video_fal_url, timeout=60.0)
         local_video_url = upload_video(video_bytes)
 
         await _set_status(job_id, JobStatus.DONE, video_url=local_video_url)
-        logger.info(f"[{job_id}] Pipeline complete → {local_video_url}")
+        logger.info(f"[{job_id}] Pipeline complete: {local_video_url}")
 
     except Exception as e:
-        msg = str(e)
-        logger.error(f"[{job_id}] Pipeline failed: {msg}", exc_info=True)
-        await _set_status(job_id, JobStatus.FAILED, error_message=msg)
-
-
+        logger.error(f"[{job_id}] Pipeline failed: {e}", exc_info=True)
+        await _set_status(job_id, JobStatus.FAILED, error_message=str(e))

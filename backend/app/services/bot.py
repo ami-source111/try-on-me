@@ -1,1 +1,1 @@
-# Telegram bot removed — using cookie-based sessions instead.
+# Reserved for future Telegram notifications (optional feature).

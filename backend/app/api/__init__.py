@@ -1,1 +1,1 @@
-from app.api import auth, health, sessions, tryon
+from app.api import health, sessions, tryon

@@ -27,6 +27,9 @@ services:
       - media_data:/app/media
     ports:
       - "127.0.0.1:8765:8000"   # только localhost — nginx на сервере проксирует
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     depends_on:
       db:
         condition: service_healthy
