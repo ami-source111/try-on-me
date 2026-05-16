@@ -1,0 +1,36 @@
+services:
+
+  # ── PostgreSQL ──────────────────────────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: tryonme
+      POSTGRES_USER: tryonme
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tryonme"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ── FastAPI App ─────────────────────────────────────────────────────────────
+  app:
+    build: ./backend
+    restart: unless-stopped
+    env_file: ./backend/.env
+    environment:
+      DATABASE_URL: postgresql://tryonme:${DB_PASSWORD}@db:5432/tryonme
+    volumes:
+      - media_data:/app/media
+    ports:
+      - "127.0.0.1:8765:8000"   # только localhost — nginx на сервере проксирует
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  media_data:
