@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Try on Me</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      width: 300px;
+      min-height: 200px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #fff;
+      color: #111;
+    }
+
+    /* ── Header ── */
+    .header {
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      padding: 14px 16px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .header-icon { font-size: 20px; }
+    .header-title { color: #fff; font-size: 15px; font-weight: 700; letter-spacing: -0.01em; }
+    .header-sub { color: rgba(255,255,255,0.75); font-size: 11px; margin-top: 1px; }
+
+    /* ── Content ── */
+    .content { padding: 16px; }
+
+    /* ── State: no photo ── */
+    .upload-area {
+      border: 2px dashed #d1d5db;
+      border-radius: 10px;
+      padding: 20px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .upload-area:hover { border-color: #6366f1; background: #f5f3ff; }
+    .upload-icon { font-size: 32px; margin-bottom: 8px; }
+    .upload-title { font-size: 13px; font-weight: 600; color: #374151; }
+    .upload-sub { font-size: 11px; color: #9ca3af; margin-top: 4px; }
+    #file-input { display: none; }
+
+    .btn {
+      display: block;
+      width: 100%;
+      margin-top: 10px;
+      padding: 9px;
+      background: #6366f1;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .btn:hover { background: #4f46e5; }
+    .btn:disabled { background: #9ca3af; cursor: default; }
+
+    /* ── State: has photo, idle ── */
+    .idle-state { text-align: center; padding: 10px 0; }
+    .idle-icon { font-size: 36px; margin-bottom: 8px; }
+    .idle-title { font-size: 13px; font-weight: 600; color: #374151; }
+    .idle-sub { font-size: 11px; color: #9ca3af; margin-top: 4px; line-height: 1.5; }
+    .change-photo { font-size: 11px; color: #6366f1; cursor: pointer; margin-top: 10px; display: inline-block; }
+
+    /* ── State: processing ── */
+    .processing-state { text-align: center; padding: 10px 0; }
+    .spinner {
+      width: 36px; height: 36px;
+      border: 3px solid #e5e7eb;
+      border-top-color: #6366f1;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin: 0 auto 10px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .processing-title { font-size: 13px; font-weight: 600; color: #374151; }
+    .processing-sub { font-size: 11px; color: #9ca3af; margin-top: 4px; }
+    .status-badge {
+      display: inline-block;
+      margin-top: 8px;
+      padding: 3px 10px;
+      background: #f3f4f6;
+      border-radius: 20px;
+      font-size: 11px;
+      color: #6b7280;
+    }
+
+    /* ── State: done ── */
+    .done-state {}
+    video {
+      width: 100%;
+      border-radius: 8px;
+      background: #000;
+      display: block;
+    }
+    .done-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .btn-outline {
+      flex: 1;
+      padding: 8px;
+      background: #fff;
+      color: #6366f1;
+      border: 1.5px solid #6366f1;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .btn-outline:hover { background: #f5f3ff; }
+
+    /* ── State: error ── */
+    .error-box {
+      background: #fef2f2;
+      border: 1px solid #fca5a5;
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-size: 12px;
+      color: #991b1b;
+      margin-top: 4px;
+    }
+
+    /* ── Upload progress overlay ── */
+    .uploading {
+      text-align: center;
+      padding: 20px 0;
+    }
+    .uploading-text { font-size: 13px; color: #6b7280; margin-top: 10px; }
+
+    /* ── Hidden ── */
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-icon">👗</div>
+  <div>
+    <div class="header-title">Try on Me</div>
+    <div class="header-sub">Virtual fitting room</div>
+  </div>
+</div>
+
+<div class="content">
+
+  <!-- State 1: нет фото -->
+  <div id="state-no-photo" class="hidden">
+    <div class="upload-area" id="upload-trigger">
+      <div class="upload-icon">📸</div>
+      <div class="upload-title">Upload your photo</div>
+      <div class="upload-sub">Full body, good lighting<br>JPEG or PNG, max 10MB</div>
+    </div>
+    <input type="file" id="file-input" accept="image/jpeg,image/png,image/webp">
+    <button class="btn" id="upload-btn">Choose photo</button>
+  </div>
+
+  <!-- State 1b: загрузка фото -->
+  <div id="state-uploading" class="uploading hidden">
+    <div class="spinner"></div>
+    <div class="uploading-text">Uploading your photo…</div>
+  </div>
+
+  <!-- State 2: фото есть, ждём нажатия кнопки -->
+  <div id="state-idle" class="idle-state hidden">
+    <div class="idle-icon">✨</div>
+    <div class="idle-title">Ready to try on!</div>
+    <div class="idle-sub">Click «Try on me» button<br>on any clothing image</div>
+    <span class="change-photo" id="change-photo-btn">Change photo</span>
+  </div>
+
+  <!-- State 3: идёт генерация -->
+  <div id="state-processing" class="processing-state hidden">
+    <div class="spinner"></div>
+    <div class="processing-title">Generating your try-on…</div>
+    <div class="processing-sub">Takes about 60–90 seconds</div>
+    <div class="status-badge" id="status-label">Preparing…</div>
+  </div>
+
+  <!-- State 4: видео готово -->
+  <div id="state-done" class="done-state hidden">
+    <video id="result-video" autoplay loop muted playsinline controls></video>
+    <div class="done-actions">
+      <button class="btn-outline" id="try-again-btn">Try another</button>
+      <button class="btn" id="download-btn" style="flex:1">Save video</button>
+    </div>
+  </div>
+
+  <!-- Ошибка -->
+  <div id="state-error" class="error-box hidden"></div>
+
+</div>
+
+<script src="popup.js"></script>
+</body>
+</html>
