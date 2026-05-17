@@ -27,13 +27,30 @@ from app.services.storage import download_url, upload_video
 logger = logging.getLogger(__name__)
 
 TRYON_PROMPT = (
-    "The person from the first image wearing the exact clothes from the second image. "
-    "Keep the face, hair, and skin tone identical. "
-    "Full body photo, white studio background, photorealistic."
+    "Use the person from IMAGE 1 as the identity reference and the outfit from IMAGE 2 as the clothing reference. "
+    "Create a realistic full-body fashion try-on image where the person from IMAGE 1 is wearing the exact outfit from IMAGE 2. "
+    "Preserve the person's face, facial features, hairstyle, body shape, height proportions, skin tone, age, and natural appearance as accurately as possible. "
+    "The final pose should be neutral, relaxed, and suitable for an online clothing fitting preview: standing upright, facing the camera, arms naturally positioned slightly away from the body or relaxed along the sides. "
+    "If the clothing reference has hands in pockets, crossed arms, hidden sleeves, cropped parts, folds, or occluded areas, intelligently reconstruct the missing parts of the garment so the outfit looks complete, natural, and physically plausible. "
+    "Transfer the clothing accurately: keep the same fabric, color, texture, seams, collar, sleeves, buttons, zipper, pockets, length, silhouette, fit, wrinkles, drape, and overall style from IMAGE 2. "
+    "The clothing should conform naturally to the body of the person from IMAGE 1 without changing their body type. "
+    "Use clean studio lighting, neutral background, realistic shadows, high-resolution commercial fashion photography style. "
+    "The result should look like a real person trying on the outfit, not a face swap, not a mannequin, not AI-generated. "
+    "Important constraints: "
+    "Do not change the person's identity. "
+    "Do not beautify or stylize the face. "
+    "Do not alter skin color or body proportions. "
+    "Do not copy the pose from IMAGE 2 if it hides the outfit. "
+    "Do not distort hands, face, legs, or clothing edges. "
+    "Do not invent a different outfit. "
+    "Do not add accessories unless they are clearly part of the outfit in IMAGE 2. "
+    "Keep the final image realistic, natural, and usable for an e-commerce virtual fitting preview."
 )
 
 TRYON_NEGATIVE_PROMPT = (
-    "different person, different face, different skin tone, cartoon, deformed, ugly"
+    "different person, different face, different skin tone, face swap, mannequin, "
+    "cartoon, deformed, ugly, distorted hands, distorted face, distorted legs, "
+    "body modification, stylized, beautified, AI-generated look, extra accessories"
 )
 
 VIDEO_PROMPT = (
