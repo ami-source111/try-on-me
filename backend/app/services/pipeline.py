@@ -162,7 +162,7 @@ async def run_pipeline(job_id: str):
         logger.info(f"[{job_id}] Uploading images to fal.ai")
 
         photo_bytes = _local_photo_bytes(photo_url)
-        clothing_bytes = await download_url(clothing_url, timeout=30.0)
+        clothing_bytes = await download_url(clothing_url, timeout=60.0)
 
         person_fal_url, garment_fal_url = await asyncio.gather(
             _upload_bytes_to_fal(photo_bytes, ".jpg"),

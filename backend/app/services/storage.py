@@ -42,9 +42,21 @@ def upload_video(data: bytes) -> str:
     return upload_bytes(data, key)
 
 
-async def download_url(url: str, timeout: float = 15.0) -> bytes:
-    """Скачать файл по URL (async)."""
-    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-        response = await client.get(url)
-        response.raise_for_status()
-        return response.content
+async def download_url(url: str, timeout: float = 60.0, retries: int = 3) -> bytes:
+    """Скачать файл по URL (async), с retry при таймауте."""
+    import asyncio
+    import logging
+    logger = logging.getLogger(__name__)
+    last_exc = None
+    for attempt in range(1, retries + 1):
+        try:
+            async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+                response = await client.get(url)
+                response.raise_for_status()
+                return response.content
+        except (httpx.ReadTimeout, httpx.ConnectTimeout) as e:
+            last_exc = e
+            logger.warning(f"download_url timeout (attempt {attempt}/{retries}): {url}")
+            if attempt < retries:
+                await asyncio.sleep(3 * attempt)
+    raise last_exc
